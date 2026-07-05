@@ -1,0 +1,17 @@
+# Secrets — never commit signing material.
+firmware/tools/testkey.pem
+secure_boot_signing_key.pem
+*.pem
+app/tools_vectors/*.priv
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local virtualenvs / tool caches
+firmware/tools/.venv/
+firmware/.docker-home/
+
+# IDE
+.idea/
+*.iml
