@@ -1,0 +1,35 @@
+# sdkconfig.hardening -- ESP32-S3 hardware root of trust for secret-bearing units
+# (SECURITY_FIXES.md Fix 1). Append this fragment to the board's sdkconfig when
+# building MicroPython (alongside the ced25519 USER_C_MODULE, see ced25519/BUILD.md).
+#
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.board;sdkconfig.hardening" build
+#
+# ⚠ These options drive ONE-WAY eFuse burns on first secure boot. They can BRICK a
+# unit and disable UART re-flashing. Prove the whole push flow on a THROWAWAY dev
+# board first, then confirm with `espefuse.py summary` (see the provisioning
+# ceremony in CLAUDE.md "Provisioning requirements"). Losing the signing key below
+# means you can never update a locked board again -- store it offline.
+
+# --- Secure Boot v2 (RSA-PSS/ECDSA image signing) --------------------------------
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+
+# --- Flash encryption (release mode -- NOT development) --------------------------
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+
+# --- Lock down the debug/recovery surfaces --------------------------------------
+# Disable the ROM UART download mode entirely (no re-flash / no plaintext dump).
+CONFIG_SECURE_DISABLE_ROM_DL_MODE=y
+# Encrypted-only DL mode alternative (choose ONE of the two lines above/below):
+# CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
+CONFIG_SECURE_BOOT_ALLOW_JTAG=n
+CONFIG_EFUSE_VIRTUAL=n
+
+# --- Belt-and-suspenders: keep the app filesystem read-only at runtime so even a
+#     builtins-allow-list bypass (Fix 7) cannot rewrite main.py / PUBKEY. If your
+#     board mounts LittleFS writable for scripts, keep loader files on a separate
+#     read-only partition instead. (This is a build/partition decision, documented
+#     here as a reminder; MicroPython mounts are set in the partition table.)
