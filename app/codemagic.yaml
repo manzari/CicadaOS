@@ -1,0 +1,47 @@
+# Codemagic CI for CicadaOS — cloud iOS builds (developer has no Mac).
+# Prerequisites the USER must supply (Codemagic UI → environment groups / integrations):
+#   - Apple Developer account + App Store Connect API key (integration name below)
+#   - App identifier registered: dev.manzari.cicadaos
+#   - An "app_store_credentials" group holding APP_STORE_CONNECT_* if not using the
+#     managed integration.
+# Android builds run fine locally in Docker; this file exists for iOS/TestFlight.
+
+workflows:
+  ios-testflight:
+    name: iOS → TestFlight
+    max_build_duration: 60
+    integrations:
+      app_store_connect: CicadaOS ASC Key # <-- name of your App Store Connect API key in Codemagic
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: dev.manzari.cicadaos
+      vars:
+        BUNDLE_ID: "dev.manzari.cicadaos"
+        APP_STORE_APPLE_ID: 0000000000 # <-- your app's Apple ID (numeric), once created in ASC
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Flutter pub get
+        script: flutter pub get
+      - name: Codegen (drift)
+        script: dart run build_runner build --delete-conflicting-outputs
+      - name: Flutter analyze & test
+        script: |
+          flutter analyze
+          flutter test
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Flutter build ipa
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - flutter_drive.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # Manual review submission; TestFlight internal testers get it automatically.
