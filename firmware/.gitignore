@@ -1,0 +1,11 @@
+# Secrets — never commit signing material.
+tools/testkey.pem
+secure_boot_signing_key.pem
+*.pem
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local virtualenvs
+tools/.venv/
