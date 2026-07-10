@@ -60,11 +60,12 @@ def boot():
         offset_x=_OFFSET_X,
         offset_y=_OFFSET_Y,
         color_space=lv.COLOR_FORMAT.RGB565,
-        color_byte_order=jd9853.BYTE_ORDER_BGR,   # verify with 07_selftest; flip to BYTE_ORDER_RGB if red<->blue
+        color_byte_order=jd9853.BYTE_ORDER_RGB,   # RGB confirmed: green text read pink (not purple) under inversion
         rgb565_byte_swap=True,
     )
     disp.set_power(True)
     disp.init()
+    disp.set_color_inversion(True)   # panel is inverted: near-black bg was showing white -> INVON
     disp.set_backlight(100)
 
     # --- touch (AXS5106L over I2C) ---

@@ -316,6 +316,8 @@ class _Lifecycle:
         w.set_value(0)
         w.remove_style(None, lv.PART.KNOB)
         w.set_style_arc_opa(0, lv.PART.MAIN)
+        w.set_style_bg_opa(0, lv.PART.MAIN)          # arc widget bg is opaque by default here -> hide the square
+        w.set_style_border_width(0, lv.PART.MAIN)
         w.set_style_arc_width(7, lv.PART.INDICATOR)
         w.set_style_arc_color(lv.color_hex(_HUSK), lv.PART.INDICATOR)
         w.set_style_arc_opa(150, lv.PART.INDICATOR)
