@@ -41,7 +41,7 @@ class DevicesRepository {
   }
 
   /// Pin the device's X25519 public key (64-hex) at provisioning. Scripts are
-  /// encrypted to this key; a device without one cannot be pushed to (Fix 3).
+  /// encrypted to this key; a device without one cannot be pushed to.
   Future<void> pinKey(String id, String x25519PubKeyHex) async {
     await _db.into(_db.devices).insertOnConflictUpdate(
           DevicesCompanion(id: Value(id), x25519PubKey: Value(x25519PubKeyHex)),

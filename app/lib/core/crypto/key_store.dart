@@ -19,7 +19,7 @@ class SecureKeyStore implements KeyStore {
             const FlutterSecureStorage(
               // ThisDeviceOnly: the seed is excluded from transferable device
               // backups, so it can't be lifted from an iTunes/Finder backup and
-              // restored onto another device (Fix 9).
+              // restored onto another device.
               iOptions: IOSOptions(
                   accessibility: KeychainAccessibility.first_unlock_this_device),
             );

@@ -8,7 +8,7 @@ import 'package:path_provider/path_provider.dart';
 part 'database.g.dart';
 
 /// MicroPython scripts. Bodies live in the DB (≤16 KB by protocol). A body
-/// flagged [isSecret] is stored encrypted at rest (Fix 6): the on-disk column
+/// flagged [isSecret] is stored encrypted at rest: the on-disk column
 /// holds ciphertext, and [ScriptsRepository] transparently decrypts on read.
 class Scripts extends Table {
   IntColumn get id => integer().autoIncrement()();
@@ -26,7 +26,7 @@ class Devices extends Table {
   TextColumn get id => text()(); // 12-hex device id
   TextColumn get name => text().nullable()();
   // Pinned X25519 public key (64-hex), stored at provisioning. Scripts are
-  // encrypted to it (Fix 3); a device with no pinned key cannot be pushed to.
+  // encrypted to it; a device with no pinned key cannot be pushed to.
   TextColumn get x25519PubKey => text().nullable()();
   DateTimeColumn get lastSeen => dateTime().nullable()();
   DateTimeColumn get lastPairedAt => dateTime().nullable()();

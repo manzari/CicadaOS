@@ -149,6 +149,11 @@ signed msg = header || eph_pub || aead_nonce || ciphertext || mac    # what Ed25
   native `ced25519` module if compiled in, else a self-contained pure-Python fallback
   (correct but slow; the host test suite forces the pure-Python path). Both bundle their own
   hashes since stock ESP32 hashlib lacks sha512/blake2b.
+- The pure-Python verifier enforces RFC 8032 canonicality — it rejects `S >= L` (signature
+  malleability) and decoded points with `y >= q`. Keep both checks. They are not currently
+  exploitable (the nonce is single-use and consumed at frame-parse time, so a second valid
+  encoding of the same signature buys nothing), but that safety net disappears the moment the
+  nonce lifecycle changes. The native path is unaffected.
 - **`exec` is sandboxed** (`_safe_builtins` + a guarded `__import__` allow-list): no `open`,
   no `os`/`io`/`vfs`/`esp`/`flashbdev`, so an authenticated script can't rewrite `main.py`
   or `PUBKEY` and persist. Hardware modules a dashboard script needs (`machine`, `gc`,
@@ -165,8 +170,17 @@ signed msg = header || eph_pub || aead_nonce || ciphertext || mac    # what Ed25
   never retype crypto from memory. `moned25519.c` only *wraps* Monocypher calls (`verify`,
   `x25519`, `blake2b`, `aead_unlock`). Build notes in `ced25519/BUILD.md`.
 - **Loader status display** (`lifecycle_ui.py`, optional flash file): narrates loader
-  state as a cicada life cycle (egg=boot, nymph=advertising/linked, molting=RX progress,
-  emergence=verify, adult=script ran, rejected=errors). Display I/O happens **only in the
+  state as a cicada life cycle (boot=intro cinematic, egg=waking, hatch=egg→nymph transition,
+  nymph=advertising/linked, molting=RX progress, emergence=verify, adult=script ran,
+  rejected=errors). At power-on the
+  `boot` stage plays a one-shot cinematic (dusk sky titled "CicadaOS", a cicada glides down
+  as the title dissolves and the camera pans until the horizon sits mid-screen, then it lays
+  the egg on the grassline) whose final frame is built to match the `egg` card, so the
+  hand-off is seamless; boot then holds the egg card ≥5 s, then plays the one-shot `hatch`
+  transition (the egg wobbles, cracks, its shell splits into two halves that part and fall,
+  and a nymph crawls out and burrows down) before going live. `hatch`'s first frame matches
+  the `egg` card and its last frame matches `nymph`, so both hand-offs are seamless. Display
+  I/O happens **only in the
   main loop** (`process()`/`_update_display()`), never the BLE IRQ; `autodetect()` never
   raises and any display fault degrades to `NullDisplay`. Once a pushed script paints its
   own UI (root DELETE event), the loader goes screen-silent until reboot (LED cues only).
@@ -195,7 +209,16 @@ signing seed and the DB body key · **flutter_blue_plus** (BLE) · **re_editor**
 - `lib/features/` — `scripts` (library + editor), `devices` (+ key provisioning: pin the
   device X25519 key), `push` (refuses to push to a device with no pinned key),
   `import_export` (`.cicada` — refuses to export `isSecret` scripts in cleartext),
-  `boot_watch` (auto-push is gated behind a one-time token from our own PendingIntent, Fix 8).
+  `boot_watch` (auto-push is gated behind a one-time token from our own PendingIntent).
+- **`MainActivity` is `exported="true"`** (Flutter needs it), so any co-installed app can
+  launch it with arbitrary extras. Auto-push therefore runs **only** when the launch carries
+  the one-time token `BootWatchReceiver` minted for its own `PendingIntent`; the `auto` extra
+  defaults to **false**. Never trust `boot_watch_*` extras off a bare intent — without the
+  token gate, any app that learned a device id (BLE advertisements broadcast it in the clear)
+  could force the phone to sign and push that device's default secret script.
+- **Backups are off:** `allowBackup="false"` + `fullBackupContent="false"` +
+  `dataExtractionRules`. Otherwise Android Auto Backup / `adb backup` lifts the whole script
+  DB off the phone. Keep all three; they are the only thing stopping that path.
 - **Signing-key decision:** a software Ed25519 key generated in-app and stored in secure
   storage (`ThisDeviceOnly` on iOS so it can't be lifted from a device backup) — NOT
   hardware-bound. Accepted cross-platform trade-off. A signed script runs sandboxed on the

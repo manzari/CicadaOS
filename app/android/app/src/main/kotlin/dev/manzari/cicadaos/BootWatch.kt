@@ -23,7 +23,7 @@ object BootWatch {
     const val PREFS = "boot_watch"
     const val KEY_DEVICES = "device_ids"
     // One-time token proving an auto-push launch came from our own notification
-    // PendingIntent, not an arbitrary co-installed app (Fix 8).
+    // PendingIntent, not an arbitrary co-installed app.
     const val KEY_AUTOPUSH_TOKEN = "autopush_token"
     private const val SCAN_ACTION = "dev.manzari.cicadaos.SCAN_RESULT"
 

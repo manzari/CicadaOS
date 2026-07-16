@@ -53,7 +53,7 @@ void main() {
     });
   });
 
-  group('secret scripts encrypted at rest (Fix 6)', () {
+  group('secret scripts encrypted at rest', () {
     // Fixed 32-byte key so the test is deterministic (prod uses secure storage).
     ScriptsRepository secretRepo() =>
         ScriptsRepository(db, cipher: ScriptBodyCipher(() async => List<int>.filled(32, 7)));

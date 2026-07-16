@@ -43,7 +43,7 @@ class BootWatchReceiver : BroadcastReceiver() {
         // Mint a one-time token, embed it in this (immutable) PendingIntent, and
         // store it. MainActivity only honours auto-push when the launch carries
         // the matching token, so a co-installed app that spoofs the extras cannot
-        // trigger a silent push (Fix 8).
+        // trigger a silent push.
         val token = java.util.UUID.randomUUID().toString()
         context.getSharedPreferences(BootWatch.PREFS, Context.MODE_PRIVATE).edit()
             .putString(BootWatch.KEY_AUTOPUSH_TOKEN, token).apply()

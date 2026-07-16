@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Fix 10: keep the app's data (incl. the Drift SQLite DB of script bodies) out
+<!-- Keep the app's data (incl. the Drift SQLite DB of script bodies) out
      of cloud backup and adb-backup/device-transfer. Combined with
      android:allowBackup="false", nothing is backed up; these rules are the
      explicit belt-and-suspenders for Android 12+ (dataExtractionRules). -->

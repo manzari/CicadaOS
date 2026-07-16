@@ -44,24 +44,35 @@ cover the new behavior.
 
 ## Loader status display (`lifecycle_ui.py`, optional)
 
-Narrates loader state on the 172×320 panel as a cicada life cycle:
+Narrates loader state on the 172×320 panel as a cicada life cycle. All stages, in
+order, with the exact on-screen text (each card shows a title, a top subtitle, and a
+bottom caption):
 
-| Loader state              | Stage       | Screen                                            |
-|---------------------------|-------------|---------------------------------------------------|
-| boot                      | `egg`       | egg on a twig, breathing glow                     |
-| advertising               | `nymph`     | nymph deep underground, expanding cyan call-ring  |
-| central connected         | `nymph`     | nymph surfaced; shows `challenge nonce[:4].hex()` |
-| frame reception (RX)      | `molting`   | husk at the surface, dorsal-crack progress bar    |
-| verify+decrypt            | `emergence` | teneral cicada, wings unfurling (drawn *before* the slow verify) |
-| script ran (`OK:done`)    | `adult`     | green cicada + chirping song bars                 |
-| `ERR:sig` / `ERR:exec`    | `rejected`  | cracked husk, red; "not this brood"/"failed"      |
+| Loader state              | Stage       | Title        | Subtitle (top)      | Caption (bottom)          | Screen                                            |
+|---------------------------|-------------|--------------|---------------------|---------------------------|---------------------------------------------------|
+| power-on                  | `boot`      | `CicadaOS`   | "loader"            | *(none)*                  | one-shot cinematic: dusk sky → cicada glides down, title dissolves, camera pans to the horizon, egg is laid; resolves into the `egg` card |
+| boot (settled)            | `egg`       | `E G G`      | "waking"            | "unit `<id>`"             | egg on a twig, breathing glow                     |
+| advertising (idle)        | `nymph`     | `N Y M P H`  | "listening for a push" | "unit `<id>`"          | nymph deep underground, expanding cyan call-ring  |
+| central connected         | `nymph`     | `N Y M P H`  | "challenge `<hex>`" | "conditions met"            | nymph surfaced; shows `challenge nonce[:4].hex()` |
+| frame reception (RX)      | `molting`   | `M O L T I N G` | "receiving …%"   | "shell splitting"         | husk at the surface, dorsal-crack progress bar    |
+| verify+decrypt            | `emergence` | `E M E R G E N C E` | "verifying signature" | *(none)*          | teneral cicada, wings unfurling (drawn *before* the slow verify) |
+| script ran (`OK:done`)    | `adult`     | `A D U L T`  | "script is running" | "OK - done"               | green cicada + chirping song bars                 |
+| `ERR:sig`                 | `rejected`  | `R E J E C T E D` | "signature refused" | "not this brood"     | cracked husk, red                                 |
+| `ERR:exec`                | `rejected`  | `F A I L E D` | "script raised an error" | "waiting for another push" | cracked husk, red                          |
+
+At idle with no phone connected you only ever see `boot` → `egg` → `nymph` (advertising);
+the `nymph`(connected) → `molting` → `emergence` → `adult`/`rejected` stages are
+push-driven. The `boot` cinematic plays once at power-on and dissolves seamlessly into the
+`egg` card (its final frame is drawn to match).
 
 Invariants (also in `../CLAUDE.md` — do not silently revert): display I/O only from the
 main loop, never the BLE IRQ (the loop polls IRQ-written state); `autodetect()` never
 raises and any display fault degrades to `NullDisplay` (panel dies, BLE lives); terminal
-cards hold (`_HOLD_*_MS`: boot 2 s, error 2.5 s, success 6 s) before returning to nymph,
-and new RX activity breaks the hold immediately; once a pushed script paints its own UI
-(loader root's DELETE event), the loader goes screen-silent until reboot, LED cues only.
+cards hold (`_HOLD_*_MS`: intro cinematic 4.5 s → egg 5 s, error 2.5 s, success 6 s) before returning to nymph,
+and new RX activity breaks the hold immediately; **every stage is held at least
+`_MIN_SHOW_MS` (1 s) before the next paints over it** (so a fast native verify can't flash
+`emergence` past in a few ms); once a pushed script paints its own UI (loader root's DELETE
+event), the loader goes screen-silent until reboot, LED cues only.
 
 Deploy (it's an optional flash file):
 

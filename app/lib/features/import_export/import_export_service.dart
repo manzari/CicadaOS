@@ -12,7 +12,7 @@ import '../../data/scripts_repository.dart';
 /// Import/export of `.cicada` (and bare `.py`) scripts (Task 5).
 class ImportExportService {
   /// Export a script as a `.cicada` file and hand it to the system share sheet.
-  /// Secret scripts are never exported in cleartext (Fix 6): sharing one throws.
+  /// Secret scripts are never exported in cleartext: sharing one throws.
   static Future<void> shareScript(Script s) async {
     if (s.isSecret) {
       throw StateError('refusing to export a secret script in cleartext');

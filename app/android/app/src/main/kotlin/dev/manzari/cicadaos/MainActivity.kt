@@ -46,7 +46,7 @@ class MainActivity : FlutterActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val device = intent?.getStringExtra("boot_watch_push_device") ?: return
-        // Fix 8: default auto=false, and only honour it when the launch carries
+        // Default auto=false, and only honour it when the launch carries
         // the one-time token our own notification PendingIntent set. This blocks
         // any co-installed app from driving a silent auto-push via the exported
         // activity — an unqualified external launch at most opens the push screen.

@@ -4,7 +4,7 @@ import 'database.dart';
 import 'script_body_cipher.dart';
 
 /// CRUD for the local script library. When a [ScriptBodyCipher] is provided,
-/// bodies of scripts flagged `isSecret` are encrypted at rest (Fix 6): the SQLite
+/// bodies of scripts flagged `isSecret` are encrypted at rest: the SQLite
 /// file holds ciphertext, while every value returned here is decrypted plaintext.
 class ScriptsRepository {
   final AppDatabase _db;

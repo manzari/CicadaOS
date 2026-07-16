@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Encrypts secret script bodies at rest (Fix 6). The on-disk `body` column of a
+/// Encrypts secret script bodies at rest. The on-disk `body` column of a
 /// secret script holds `enc:v1:<base64(nonce(12) || ciphertext || mac(16))>`
 /// (AES-256-GCM); the key lives in platform secure storage, never in the DB.
 ///
