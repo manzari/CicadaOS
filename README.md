@@ -1,3 +1,5 @@
+Mirrored on GitHub — development happens on Codeberg: https://codeberg.org/manzari/CicadaOS
+
 # CicadaOS
 
 **Authenticated, confidential, ephemeral code push over BLE.**
