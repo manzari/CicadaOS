@@ -23,6 +23,13 @@ iOS is built in the cloud (developer has no Mac) — see `codemagic.yaml`.
 - **State** riverpod · **Nav** go_router · **DB** drift (SQLite) · **Crypto**
   `cryptography` (Ed25519) + `flutter_secure_storage` · **BLE** flutter_blue_plus
   · **Editor** re_editor.
+
+  ⚠ **flutter_blue_plus is not open source** — free for personal/nonprofit/
+  educational use only; for-profit use (including by an individual) needs a paid
+  commercial license. `connect()` therefore passes `License.nonprofit`
+  (`lib/core/ble/fbp_transport.dart`), which is accurate for this project and must
+  be revisited by anyone adapting it commercially. See the root
+  [`../README.md`](../README.md#licensing).
 - `lib/core/` — the byte-exact heart, all pure-Dart and unit-tested:
   - `protocol.dart` msg/frame builders (CLAUDE.md wire protocol), `crypto/signer.dart` sign,
   - `ble/` `tx_status.dart` (status parser, kept standalone for future dashboards),

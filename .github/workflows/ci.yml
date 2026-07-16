@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  firmware:
+    name: Firmware host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # stdlib-only by design: no hardware, no deps, no Docker.
+      - run: python3 firmware/tests/test_flow.py
+
+  app:
+    name: App tests
+    runs-on: ubuntu-latest
+    # Same image fdart.sh pins, so CI matches local exactly.
+    container: ghcr.io/cirruslabs/flutter:stable
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory '*'
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter analyze
+        working-directory: app
+      - run: flutter test
+        working-directory: app
+
+  vectors:
+    name: Byte vectors are in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Regenerating must be a no-op; a diff means firmware and app have drifted
+      # apart and the committed proof is stale.
+      - run: python3 firmware/tools/make_vectors.py
+      - run: git diff --exit-code -- app/tools_vectors/vectors.json
