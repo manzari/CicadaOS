@@ -64,7 +64,7 @@ if DEVICE_X25519_PRIV == bytes(32):
 _X25519_BASE = b"\x09" + b"\x00" * 31
 DEVICE_X25519_PUB = x25519(DEVICE_X25519_PRIV, _X25519_BASE)
 
-# --------------------------------------------------------- exec sandbox (Fix 7) ---
+# ------------------------------------------------------------ exec sandbox ---
 # A signed script is authenticated but NOT trusted with the loader. Run it with a
 # minimal builtins allow-list and a guarded __import__: no `open`, no filesystem
 # (`os`/`io`/`vfs`) and no raw-flash (`esp`/`flashbdev`) modules, so it cannot
@@ -146,18 +146,28 @@ _MFR_AWAITING = const(0x01)    # flags bit0: no valid script has run since boot
 # The panel narrates loader state as a cicada life cycle (lifecycle_ui.py).
 # All display I/O happens in the main loop (process/_update_display) -- NEVER
 # in the BLE IRQ. Terminal cards are held on screen before returning to nymph.
-_HOLD_BOOT_MS = const(2000)
+# Boot plays a one-shot cinematic (sky + "CicadaOS" + a cicada gliding down to
+# lay the egg) that resolves into the egg card, which holds >= 5 s, then a
+# one-shot hatch transition (the egg splits and a nymph crawls out and burrows)
+# before the loader settles into the live nymph flow.
+_HOLD_INTRO_MS = const(4500)    # boot cinematic; must outlast the animation
+_HOLD_EGG_MS = const(5000)      # egg card min hold after the intro (spec: >= 5 s)
+_HOLD_HATCH_MS = const(3000)    # egg->nymph hatch transition; outlast its animation
 _HOLD_ERR_MS = const(2500)
 _HOLD_OK_MS = const(6000)
+_MIN_SHOW_MS = const(1000)      # floor: every lifecycle card stays up this long
 
 # CPython (host tests) lacks time.ticks_*; MicroPython has them and they wrap.
 _ticks_ms = getattr(time, "ticks_ms", None) or (lambda: int(time.time() * 1000))
 _ticks_add = getattr(time, "ticks_add", None) or (lambda a, b: a + b)
 _ticks_diff = getattr(time, "ticks_diff", None) or (lambda a, b: a - b)
+_sleep_ms = getattr(time, "sleep_ms", None) or (lambda ms: time.sleep(ms / 1000.0))
 
 
 class NullDisplay:
+    def boot(self, detail): pass
     def egg(self, detail): pass
+    def hatch(self, detail): pass
     def nymph(self, connected, detail, awaiting): pass
     def molting(self, got, need): pass
     def emergence(self): pass
@@ -235,8 +245,11 @@ class ScriptLoader:
         self._display = display or NullDisplay()
         self._shown = None        # last state key drawn (dedupe for the loop)
         self._hold_until = None   # keep the current card up until this tick
-        self._show("egg", self._dev_id.hex())
-        self._hold(_HOLD_BOOT_MS)
+        self._stage = None        # last lifecycle method drawn (min-show floor)
+        self._stage_at = _ticks_ms()
+        self._boot_seq = True      # play intro -> egg -> nymph before normal flow
+        self._show("boot", self._dev_id.hex())
+        self._hold(_HOLD_INTRO_MS)
 
     # -- BLE plumbing ---------------------------------------------------------
     def _advertise(self):
@@ -295,10 +308,20 @@ class ScriptLoader:
 
     # -- display (main loop only; the BLE IRQ never touches these) -------------
     def _show(self, method, *a):
+        # Hold the previous card on screen for _MIN_SHOW_MS before the next paints
+        # over it -- native verify can flip emergence->adult in a few ms, so this
+        # is what guarantees each lifecycle stage is actually seen (~1 s floor).
+        # Same-method redraws (molting progress, nymph challenge) are not padded.
+        if self._stage is not None and method != self._stage:
+            rem = _MIN_SHOW_MS - _ticks_diff(_ticks_ms(), self._stage_at)
+            if rem > 0:
+                _sleep_ms(rem)
         try:
             getattr(self._display, method)(*a)
         except Exception:
             self._display = NullDisplay()   # one glitch disables the panel, not BLE
+        self._stage = method
+        self._stage_at = _ticks_ms()
 
     def _hold(self, ms):
         self._hold_until = _ticks_add(_ticks_ms(), ms)
@@ -312,6 +335,28 @@ class ScriptLoader:
         # frame itself (emergence/adult/rejected), so skip while one is queued.
         if self._pending is not None:
             return
+        if self._boot_seq:
+            # Linear boot prelude: hold the intro cinematic, then the egg card
+            # (>= _HOLD_EGG_MS), then the egg->nymph hatch transition, then fall
+            # through to the live nymph/molting flow. A push mid-prelude (stage
+            # becomes emergence/adult/rejected) ends it.
+            if self._stage not in ("boot", "egg", "hatch"):
+                self._boot_seq = False
+            elif self._held():
+                return
+            elif self._stage == "boot":
+                self._shown = None
+                self._show("egg", self._dev_id.hex())
+                self._hold(_HOLD_EGG_MS)
+                return
+            elif self._stage == "egg":            # egg hold elapsed -> hatch
+                self._shown = None
+                self._show("hatch", self._dev_id.hex())
+                self._hold(_HOLD_HATCH_MS)
+                return
+            else:                                 # hatch done -> go live
+                self._boot_seq = False
+                self._shown = None
         if self._conn is None:
             st = ("nymph", False, self._dev_id.hex(), self._awaiting)
         elif self._need is not None or self._buf:
@@ -345,7 +390,7 @@ class ScriptLoader:
                 self._need = int.from_bytes(self._buf[:4], "big")
                 self._buf = self._buf[4:]
                 if self._need > _MAX_FRAME:
-                    # Fix 12: never drain up to 4 GB to resync -- a garbage length
+                    # Never drain up to 4 GB to resync -- a garbage length
                     # would wedge the link. Drop everything and force a reconnect.
                     self._need = None
                     self._notify(b"ERR:len")
@@ -428,11 +473,11 @@ class ScriptLoader:
                 sys.print_exception(e, tb)
                 self._notify(b"ERR:" + tb.getvalue().encode()[:180])
             else:
-                self._notify(b"ERR:exec")     # Fix 5: no source line / secret leak
+                self._notify(b"ERR:exec")     # no source line / secret leak
             self._show("rejected", "exec")
             self._hold(_HOLD_ERR_MS)
         finally:
-            # Fix 1: drop references so GC can reclaim the script memory promptly.
+            # Drop references so GC can reclaim the script memory promptly.
             # Not a zeroise (MicroPython can't guarantee that) -- it just shortens
             # the live-RAM window; flash encryption is the real guarantee.
             g.clear()

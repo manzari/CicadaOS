@@ -107,22 +107,52 @@ class _UI:
         self.touch = touch
         self.bright = 0.30          # WS2812 master scale -- full white is retina-searing
         self._timers = []
+        self._pending = None        # off-screen surface built by screen(atomic=True)
 
     # ---- screen ----
-    def screen(self, bg=0x0A0A12):
+    def screen(self, bg=0x0A0A12, atomic=False):
         """Fresh full-screen surface: stop the previous script's timers, wipe its
-        widgets (which also cancels their animations), return a clean root."""
+        widgets (which also cancels their animations), return a clean root.
+
+        atomic=True builds onto a brand-new OFF-screen surface instead of the live
+        one -- nothing is flushed to the panel until present() swaps it in as a
+        single frame. That is what stops the partial-frame tearing the loader
+        showed on every stage change (widgets flashing their default LVGL style
+        before _flat() ran). Default (atomic=False) keeps the in-place behaviour
+        pushed scripts rely on."""
         for t in self._timers:
             try:
                 t.delete()
             except Exception:
                 pass
         self._timers = []
-        scr = lv.screen_active()
-        scr.clean()
+        if atomic:
+            scr = lv.obj()          # parentless -> a screen; stays inactive until present()
+            self._pending = scr
+        else:
+            scr = lv.screen_active()
+            scr.clean()
+            self._pending = None
         scr.set_style_bg_color(lv.color_hex(bg), 0)
         scr.set_style_bg_opa(lv.OPA.COVER, 0)
         return scr
+
+    def present(self):
+        """Swap in the surface built by the last atomic screen() call as one frame,
+        then drop the screen it replaced. No-op if nothing is pending. The retired
+        screen's DELETE event fires here, so a loader guards this behind its
+        repaint flag to avoid mistaking it for a pushed-script takeover."""
+        scr = self._pending
+        if scr is None:
+            return
+        self._pending = None
+        old = lv.screen_active()
+        lv.screen_load(scr)
+        if old is not None and old is not scr:
+            try:
+                old.delete()
+            except Exception:
+                pass
 
     def every(self, period_ms, cb):
         """Register a background timer that this UI cleans up on the next screen()."""

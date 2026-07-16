@@ -6,6 +6,7 @@
 # screen-silent until reboot and keeps LED-only cues. Every public method
 # swallows display errors: a broken panel must never take BLE down.
 
+import math
 import lvgl as lv
 import cicada_ui
 
@@ -13,6 +14,7 @@ _W, _H = 172, 320
 _CX = _W // 2
 
 _NIGHT = 0x060A08
+_SKY = 0x2C4A63       # boot-cinematic dusk sky; fades to _NIGHT as the egg is laid
 _SOIL = (0x201509, 0x180F06, 0x100A04)
 _STONE = 0x2B2013
 _SURFACE = 0x2E4023
@@ -26,6 +28,27 @@ _EYE = 0xD8352A
 _ALARM = 0xE8442E
 _DIM = 0x71808C
 _RAIL_OFF = 0x22303A
+
+
+# Shared one-shot-cinematic maths (boot + hatch): a clamped 0..1 ramp over a
+# frame window, smoothstep easing, and a linear RGB tween.
+def _seg(f, a, b):
+    if f <= a:
+        return 0.0
+    if f >= b:
+        return 1.0
+    return (f - a) / (b - a)
+
+
+def _ease(t):                             # smoothstep
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _mix(c0, c1, t):
+    r = int((c0 >> 16 & 255) + ((c1 >> 16 & 255) - (c0 >> 16 & 255)) * t)
+    g = int((c0 >> 8 & 255) + ((c1 >> 8 & 255) - (c0 >> 8 & 255)) * t)
+    b = int((c0 & 255) + ((c1 & 255) - (c0 & 255)) * t)
+    return (r << 16) | (g << 8) | b
 
 
 def autodetect():
@@ -50,12 +73,24 @@ class _Lifecycle:
         if not self._repaint:
             self._owns = False
 
+    def _present(self):
+        # Swap the off-screen build in as one frame. The retired screen's root
+        # DELETE fires inside present(); the repaint guard keeps it from reading
+        # as a pushed-script takeover (which is a DELETE while not repainting).
+        self._repaint = True
+        try:
+            self._ui.present()
+        except Exception:
+            pass
+        finally:
+            self._repaint = False
+
     def _begin(self, stage, idx, color):
         self._stage = stage
         self._molt = None
         self._repaint = True
         try:
-            scr = self._ui.screen(_NIGHT)
+            scr = self._ui.screen(_NIGHT, atomic=True)
         finally:
             self._repaint = False
         root = self._flat(lv.obj(scr))
@@ -155,29 +190,290 @@ class _Lifecycle:
             pass
 
     # ---- stages (loader-facing facade) ----
+    def _egg_scene(self, root, detail, breathe=True):
+        # The resting egg-on-a-twig tableau shared by egg() and the boot finale,
+        # so the intro can dissolve into a byte-identical egg card (see boot()).
+        self._text(root, "E G G", _HUSK, lv.ALIGN.TOP_MID, 18)
+        self._text(root, "waking", _DIM, lv.ALIGN.TOP_MID, 42)
+        gy = 150
+        egg = self._flat(lv.obj(root), _HUSK, radius=11)
+        egg.set_size(20, 30)
+        egg.set_pos(_CX - 10, gy - 30)
+        if breathe:
+            def _breathe(a, v):
+                try:
+                    egg.set_style_opa(v, 0)
+                except Exception:
+                    pass
+            self._anim(egg, 90, 255, 1400, _breathe)
+        self._ground(root, gy)
+        self._text(root, "unit " + detail, _DIM, lv.ALIGN.BOTTOM_MID, -14)
+        return egg
+
     def egg(self, detail):
         try:
             self._led(0x201808)
             if not self._owns:
                 return
             root = self._begin("egg", 0, _HUSK)
-            self._text(root, "E G G", _HUSK, lv.ALIGN.TOP_MID, 18)
-            self._text(root, "waking", _DIM, lv.ALIGN.TOP_MID, 42)
-            branch = self._flat(lv.obj(root), 0x3A2A14, radius=2)
-            branch.set_size(120, 5)
-            branch.set_pos(26, 126)
+            self._egg_scene(root, detail)
+            self._present()
+        except Exception:
+            pass
+
+    def hatch(self, detail):
+        # One-shot egg -> nymph transition, played once after the egg hold. The
+        # egg wobbles, a crack opens, the shell splits into two halves that part
+        # and fall away, and a nymph crawls out onto the grassline then burrows
+        # down. The first frame matches the egg card and the last frame matches
+        # nymph(connected=False), so both hand-offs are seamless.
+        try:
+            self._led(0x201808)
+            if not self._owns:
+                return
+            self._stage = "hatch"
+            self._molt = None
+            self._repaint = True
+            try:
+                scr = self._ui.screen(_NIGHT, atomic=True)
+            finally:
+                self._repaint = False
+            root = self._flat(lv.obj(scr))
+            root.set_size(_W, _H)
+            root.set_pos(0, 0)
+            try:
+                root.add_event_cb(self._on_delete, lv.EVENT.DELETE, None)
+            except Exception:
+                self._detect = False
+
+            gy = 150
+            self._ground(root, gy)
+            self._text(root, "unit " + detail, _DIM, lv.ALIGN.BOTTOM_MID, -14)
+
+            # Crossfading titles: egg card out, nymph card in.
+            eggt = [self._text(root, "E G G", _HUSK, lv.ALIGN.TOP_MID, 18),
+                    self._text(root, "waking", _DIM, lv.ALIGN.TOP_MID, 42)]
+            nymt = [self._text(root, "N Y M P H", _CHITIN, lv.ALIGN.TOP_MID, 18),
+                    self._text(root, "listening for a push", _DIM,
+                               lv.ALIGN.TOP_MID, 42)]
+            for c in nymt:
+                c.set_style_opa(0, 0)
+
+            # Instar rail crossfade: the lit egg dot (0) hands off to the nymph
+            # rail (dot 0 dimmed to size 6, dot 1 lit at size 10).
+            def _dot(idx, size, color):
+                d = self._flat(lv.obj(root), color, radius=size)
+                d.set_size(size, size)
+                d.set_pos(14 - size // 2, _H - (22 + idx * 16) - size // 2)
+                return d
+            eggr = [_dot(0, 10, _HUSK)]
+            nymr = [_dot(0, 6, _CHITIN), _dot(1, 10, _CHITIN)]
+            for d in nymr:
+                d.set_style_opa(0, 0)
+
+            # The egg (fades at the split) with two shell halves that part and
+            # fall, plus a dark crack that opens down the middle first.
             egg = self._flat(lv.obj(root), _HUSK, radius=11)
             egg.set_size(20, 30)
-            egg.set_pos(_CX - 10, 134)
+            egg.set_pos(_CX - 10, gy - 30)
+            shl = self._flat(lv.obj(root), _HUSK, radius=6)
+            shl.set_size(12, 30)
+            shr = self._flat(lv.obj(root), _HUSK, radius=6)
+            shr.set_size(12, 30)
+            for s in (shl, shr):
+                s.set_style_opa(0, 0)
+            crack = self._flat(lv.obj(root), _NIGHT, radius=1)
+            crack.set_size(2, 0)
+            crack.set_style_opa(0, 0)
 
-            def breathe(a, v):
+            # The emerging nymph, parked at the egg and burrowed down to rest.
+            nym = self._nymph_body(root)
+            nym.set_pos(_CX - 32, gy - 30)
+            nym.set_style_opa(0, 0)
+
+            self._present()
+
+            _F = 68
+            _REST = gy + 92                       # nymph(connected=False) depth
+            st = {"f": 0}
+
+            def _tick():
                 try:
-                    egg.set_style_opa(v, 0)
+                    f = st["f"]
+                    if f <= _F:
+                        st["f"] = f + 1
+                    try:
+                        self._led(_mix(0x201808, 0x2A1C06, _seg(f, 20, 60)))
+                    except Exception:
+                        pass
+                    for c in eggt:
+                        c.set_style_opa(int(255 * (1.0 - _seg(f, 8, 26))), 0)
+                    for c in nymt:
+                        c.set_style_opa(int(255 * _seg(f, 30, 50)), 0)
+                    for d in eggr:
+                        d.set_style_opa(int(255 * (1.0 - _seg(f, 20, 38))), 0)
+                    for d in nymr:
+                        d.set_style_opa(int(255 * _seg(f, 34, 54)), 0)
+                    wob = int(2.5 * math.sin(f * 0.6)) if f < 26 else 0
+                    ch = int(30 * _seg(f, 16, 26))
+                    crack.set_size(2, ch)
+                    crack.set_pos(_CX - 1 + wob, gy - 30)
+                    crack.set_style_opa(int(255 * (_seg(f, 16, 24)
+                                                   * (1.0 - _seg(f, 26, 32)))), 0)
+                    if f < 26:                    # shell whole, wobbling
+                        egg.set_style_opa(255, 0)
+                        egg.set_pos(_CX - 10 + wob, gy - 30)
+                    else:                         # split: halves part and fall
+                        egg.set_style_opa(0, 0)
+                        part = _ease(_seg(f, 26, 48))
+                        dx = int(18 * part)
+                        dy = int(14 * part)
+                        o = int(255 * (1.0 - _seg(f, 34, 50)))
+                        shl.set_style_opa(o, 0)
+                        shr.set_style_opa(o, 0)
+                        shl.set_pos(_CX - 10 - dx, gy - 30 + dy)
+                        shr.set_pos(_CX - 2 + dx, gy - 30 + dy)
+                    nym.set_style_opa(int(255 * _seg(f, 28, 46)), 0)
+                    ny = (gy - 30) + int((_REST - (gy - 30)) * _ease(_seg(f, 44, 66)))
+                    nym.set_pos(_CX - 32, ny + int(2 * math.sin(f * 0.8)))
                 except Exception:
                     pass
-            self._anim(egg, 90, 255, 1400, breathe)
-            self._ground(root, 262)
-            self._text(root, "unit " + detail, _DIM, lv.ALIGN.BOTTOM_MID, -14)
+
+            _tick()
+            self._ui.every(40, _tick)
+        except Exception:
+            pass
+
+    def boot(self, detail):
+        # One-shot boot cinematic, played before the egg card: a dusk sky titled
+        # "CicadaOS", a cicada gliding from the top of frame down toward the
+        # ground while the title dissolves and the camera pans until the horizon
+        # sits mid-screen, then the cicada lays the egg on the grassline. Every moving
+        # part is repositioned each tick from a single frame counter, and the
+        # final frame is built to match egg() so the hand-off is seamless.
+        try:
+            self._led(0x201808)
+            if not self._owns:
+                return
+            self._stage = "boot"
+            self._molt = None
+            self._repaint = True
+            try:
+                scr = self._ui.screen(_SKY, atomic=True)
+            finally:
+                self._repaint = False
+            root = self._flat(lv.obj(scr))
+            root.set_size(_W, _H)
+            root.set_pos(0, 0)
+            root.set_style_bg_color(lv.color_hex(_SKY), 0)
+            root.set_style_bg_opa(255, 0)
+            try:
+                root.add_event_cb(self._on_delete, lv.EVENT.DELETE, None)
+            except Exception:
+                self._detect = False
+
+            title = self._text(root, "CicadaOS", _HUSK, lv.ALIGN.TOP_MID, 70)
+            sub = self._text(root, "loader", _MINT, lv.ALIGN.TOP_MID, 96)
+
+            # World (ground + egg), parked below the screen and panned up
+            # into view as the camera descends. Built in egg-card coordinates so
+            # ground/egg land exactly where egg() draws them.
+            _PAN = 210
+            gy = 150
+            world = self._flat(lv.obj(root))
+            world.set_size(_W, _H)
+            world.set_pos(0, _PAN)
+            self._ground(world, gy)
+            egg = self._flat(lv.obj(world), _HUSK, radius=11)
+            egg.set_size(20, 30)
+            egg.set_pos(_CX - 10, gy - 30)
+            egg.set_style_opa(0, 0)               # laid late in the timeline
+
+            # Egg-card chrome, screen-fixed and faded in at the very end so the
+            # swap into egg() adds nothing. Each element is faded on its own leaf
+            # (no reliance on parent-opa cascade).
+            chrome = [
+                self._text(root, "E G G", _HUSK, lv.ALIGN.TOP_MID, 18),
+                self._text(root, "waking", _DIM, lv.ALIGN.TOP_MID, 42),
+                self._text(root, "unit " + detail, _DIM, lv.ALIGN.BOTTOM_MID, -14),
+            ]
+            for i in range(5):                    # instar rail, egg dot lit (idx 0)
+                s = 10 if i == 0 else 6
+                d = self._flat(lv.obj(root), _HUSK if i == 0 else _RAIL_OFF,
+                               radius=s)
+                d.set_size(s, s)
+                d.set_pos(14 - s // 2, _H - (22 + i * 16) - s // 2)
+                chrome.append(d)
+            for c in chrome:
+                try:
+                    c.set_style_opa(0, 0)
+                except Exception:
+                    pass
+
+            # The gliding cicada (screen-fixed descent; the world rises to meet it).
+            cic = self._flat(lv.obj(root))
+            cic.set_size(46, 26)
+            wl = self._flat(lv.obj(cic), _HUSK, radius=8)
+            wl.set_size(18, 12)
+            wl.set_pos(2, 2)
+            wl.set_style_bg_opa(150, 0)
+            wr = self._flat(lv.obj(cic), _HUSK, radius=8)
+            wr.set_size(18, 12)
+            wr.set_pos(26, 2)
+            wr.set_style_bg_opa(150, 0)
+            cbody = self._flat(lv.obj(cic), _CHITIN, radius=7)
+            cbody.set_size(16, 22)
+            cbody.align(lv.ALIGN.CENTER, 0, 2)
+            chead = self._flat(lv.obj(cic), _HUSK_DK, radius=5)
+            chead.set_size(10, 10)
+            chead.align(lv.ALIGN.TOP_MID, 0, 0)
+            cic.set_pos(_CX - 23, 6)
+
+            self._present()
+
+            _F = 105
+            st = {"f": 0}
+
+            def _tick():
+                try:
+                    f = st["f"]
+                    if f <= _F:
+                        st["f"] = f + 1
+                    # dusk sky darkens into the egg card's night
+                    root.set_style_bg_color(
+                        lv.color_hex(_mix(_SKY, _NIGHT, _seg(f, 24, 88))), 0)
+                    # title dissolves as the cicada glides past it
+                    to = int(255 * (1.0 - _seg(f, 28, 58)))
+                    title.set_style_opa(to, 0)
+                    sub.set_style_opa(to, 0)
+                    # camera pans the world up until the horizon is mid-screen
+                    world.set_y(int(_PAN * (1.0 - _ease(_seg(f, 18, 86)))))
+                    # cicada descends toward the grassline with a gentle sway + wingbeat
+                    cy = 6 + (92 - 6) * _ease(_seg(f, 12, 84))
+                    sway = int(7 * math.sin(f * 0.3))
+                    cic.set_pos(int(_CX - 23 + sway), int(cy))
+                    fw = 18 if (f // 2) % 2 == 0 else 11
+                    wl.set_size(fw, 12)
+                    wr.set_size(fw, 12)
+                    wr.set_pos(44 - fw, 2)
+                    # the egg is laid onto the grassline
+                    egg.set_style_opa(int(255 * _seg(f, 78, 98)), 0)
+                    # cicada lifts away off the top of frame once the egg is down
+                    lift = _seg(f, 90, 105)
+                    cic.set_y(int(92 - 126 * lift))
+                    try:
+                        cic.set_style_opa(int(255 * (1.0 - lift)), 0)
+                    except Exception:
+                        pass
+                    # egg-card chrome fades in for a seamless hand-off to egg()
+                    co = int(255 * _seg(f, 86, 105))
+                    for c in chrome:
+                        c.set_style_opa(co, 0)
+                except Exception:
+                    pass
+
+            _tick()
+            self._ui.every(40, _tick)
         except Exception:
             pass
 
@@ -211,9 +507,6 @@ class _Lifecycle:
                 self._text(root, "listening for a push", _DIM,
                            lv.ALIGN.TOP_MID, 42)
                 self._text(root, "unit " + detail, _DIM,
-                           lv.ALIGN.BOTTOM_MID, -32)
-                self._text(root, "year 17 of 17" if awaiting else "brood live",
-                           _CHITIN if awaiting else _GREEN,
                            lv.ALIGN.BOTTOM_MID, -14)
                 ring = self._flat(lv.obj(root))
                 ring.set_style_border_width(2, 0)
@@ -228,6 +521,7 @@ class _Lifecycle:
                     except Exception:
                         pass
                 self._anim(ring, 8, 56, 1600, call, reverse=False)
+            self._present()
         except Exception:
             pass
 
@@ -258,6 +552,7 @@ class _Lifecycle:
             self._text(root, "shell splitting", _DIM, lv.ALIGN.BOTTOM_MID, -14)
             self._molt = (crack, lbl)
             self._molt_update(got, need)
+            self._present()
         except Exception:
             pass
 
@@ -303,6 +598,7 @@ class _Lifecycle:
                 except Exception:
                     pass
             self._anim(body, 0, 110, 1100, unfurl)
+            self._present()
         except Exception:
             pass
 
@@ -366,6 +662,7 @@ class _Lifecycle:
             sing()
             self._ui.every(90, sing)
             self._text(root, "OK - done", _GREEN, lv.ALIGN.BOTTOM_MID, -14)
+            self._present()
         except Exception:
             pass
 
@@ -394,5 +691,6 @@ class _Lifecycle:
             hint = ("not this brood" if kind == "sig"
                     else "waiting for another push")
             self._text(root, hint, _DIM, lv.ALIGN.BOTTOM_MID, -14)
+            self._present()
         except Exception:
             pass

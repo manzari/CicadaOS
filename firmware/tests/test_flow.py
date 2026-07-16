@@ -184,7 +184,7 @@ ldr.process()
 assert b"OUT:a" in ble.notifies and b"OUT:b" not in ble.notifies
 print("pipelined second frame -> ERR:busy, first unaffected: OK")
 
-# 5. oversized frame: ERR:len once, then force-disconnect (Fix 12)
+# 5. oversized frame: ERR:len once, then force-disconnect
 ldr, ble = fresh()
 ble.notifies.clear()
 big = (main._MAX_FRAME + 1).to_bytes(4, "big") + bytes(500)
@@ -251,7 +251,7 @@ ble.cb(DISCONNECT, (9, None, None))
 assert ldr._conn == 7
 print("foreign-handle disconnect ignored: OK")
 
-# 12. script exception -> generic ERR:exec, no traceback body (Fix 5)
+# 12. script exception -> generic ERR:exec, no traceback body
 ldr, ble = fresh()
 ldr._on_rx(frame("1/0", nonce_of(ble)))
 ldr.process()
@@ -260,7 +260,7 @@ assert not any(b"ZeroDivision" in x for x in ble.notifies), "traceback must not 
 assert nonce_of(ble) != bytes(32)
 print("script exception -> generic ERR:exec (no traceback leak): OK")
 
-# 13. sandbox (Fix 7): filesystem write is denied, loader untouched
+# 13. sandbox: filesystem write is denied, loader untouched
 ldr, ble = fresh()
 before = open(os.path.join(FIRMWARE, "main.py"), "rb").read()
 ldr._on_rx(frame("open('main.py','w').write('x')", nonce_of(ble)))
@@ -333,7 +333,9 @@ print("empty script accepted: OK")
 # ---- loader status display (cicada lifecycle facade) ------------------------
 class FakeDisplay:
     def __init__(self): self.calls = []
+    def boot(self, detail): self.calls.append(("boot", detail))
     def egg(self, detail): self.calls.append(("egg", detail))
+    def hatch(self, detail): self.calls.append(("hatch", detail))
     def nymph(self, connected, detail, awaiting):
         self.calls.append(("nymph", connected, detail, awaiting))
     def molting(self, got, need): self.calls.append(("molting", got, need))
@@ -347,21 +349,34 @@ _clk = {"t": 0}
 main._ticks_ms = lambda: _clk["t"]
 main._ticks_add = lambda a, b: a + b
 main._ticks_diff = lambda a, b: a - b
+main._sleep_ms = lambda ms: _clk.__setitem__("t", _clk["t"] + ms)  # simulated
 
-# 19. boot shows the egg; the BLE IRQ never draws; boot card holds ~2 s
+# 19. boot cinematic -> egg (>=5 s) -> hatch -> nymph; the BLE IRQ never draws
 disp = FakeDisplay()
 ldr = main.ScriptLoader(display=disp)
 ble = ldr._ble
-assert disp.calls == [("egg", "a1b2c3d4e5f6")], disp.calls
+assert disp.calls == [("boot", "a1b2c3d4e5f6")], disp.calls
 before = len(disp.calls)
 ble.cb(CONNECT, (7, None, None))
 assert len(disp.calls) == before, "no display I/O inside the BLE IRQ"
 ldr._update_display()
-assert disp.stages() == ["egg"], "boot card must hold before nymph"
-_clk["t"] = 2001
+assert disp.stages() == ["boot"], "intro must hold before the egg card"
+_clk["t"] = main._HOLD_INTRO_MS + 1
+ldr._update_display()
+assert disp.stages()[-1] == "egg", "egg card follows the boot cinematic"
+assert disp.calls[-1] == ("egg", "a1b2c3d4e5f6"), disp.calls[-1]
+ldr._update_display()
+assert disp.stages()[-1] == "egg", "egg card must keep holding (>= 5 s)"
+_clk["t"] += main._HOLD_EGG_MS + 1
+ldr._update_display()
+assert disp.stages()[-1] == "hatch", "hatch transition follows the egg hold"
+assert disp.calls[-1] == ("hatch", "a1b2c3d4e5f6"), disp.calls[-1]
+ldr._update_display()
+assert disp.stages()[-1] == "hatch", "hatch must hold through its animation"
+_clk["t"] += main._HOLD_HATCH_MS + 1
 ldr._update_display()
 assert disp.calls[-1] == ("nymph", True, nonce_of(ble)[:4].hex(), True), disp.calls[-1]
-print("display: egg at boot, IRQ draws nothing, boot hold then nymph: OK")
+print("display: boot cinematic, IRQ draws nothing, egg -> hatch -> nymph: OK")
 
 # 20. molting progress from the main loop, then emergence -> adult, hold, nymph
 f = frame("notify('ui')", nonce_of(ble))
@@ -419,6 +434,24 @@ ldr.process()
 assert b"OK:done" in ble.notifies, "a dead panel must not break the push"
 assert isinstance(ldr._display, main.NullDisplay), "faulting display gets nulled"
 print("display: faulting panel disabled, loader unharmed: OK")
+
+# 23b. min-show floor: emergence must stay up >=_MIN_SHOW_MS even when verify is
+# instant (native path) -- record the sim clock at each stage and check the gaps.
+class StampDisplay(FakeDisplay):
+    def __init__(self): super().__init__(); self.at = []
+    def _stamp(self, m): self.at.append((m, _clk["t"]))
+    def emergence(self): self._stamp("emergence"); super().emergence()
+    def adult(self): self._stamp("adult"); super().adult()
+
+disp = StampDisplay()
+ldr = main.ScriptLoader(display=disp)
+ble = ldr._ble
+ble.cb(CONNECT, (7, None, None))
+ldr._on_rx(frame("notify('ui')", nonce_of(ble)))
+ldr.process()                      # emergence then instant verify then adult
+gap = dict(disp.at)["adult"] - dict(disp.at)["emergence"]
+assert gap >= main._MIN_SHOW_MS, ("emergence cut short", gap)
+print("display: emergence held for the min-show floor before adult: OK")
 
 # 24. cross-check against the shared app vectors (byte-agreement with Dart)
 import json
