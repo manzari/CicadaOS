@@ -1,4 +1,4 @@
-Mirrored on GitHub — development happens on Codeberg: https://codeberg.org/manzari/CicadaOS
+Mirrored on GitHub — development happens on Codeberg: https://git.hauptstadt.monster/manzari/CicadaOS
 
 # CicadaOS
 
